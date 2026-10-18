@@ -4,7 +4,7 @@ Dashboard privada de análise do Instagram desenvolvida para centralizar métric
 
 O projeto combina uma interface responsiva em React com autenticação, armazenamento e funções server-side do Supabase. Os dados reais são consultados pela API oficial do Instagram/Meta e somente o proprietário configurado no backend pode acessá-los.
 
-Versão 1.0.0
+Versão 1.0.1
 
 > A aplicação é de uso privado. Este repositório apresenta a implementação para fins de portfólio, mas não fornece acesso aos dados reais nem às credenciais de produção.
 
