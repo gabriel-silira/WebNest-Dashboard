@@ -5,33 +5,16 @@ import PeriodSelect from '../components/PeriodSelect.jsx';
 import ChartCard from '../components/ChartCard.jsx';
 import MetricDetailCard from '../components/MetricDetailCard.jsx';
 import { formatNumber } from '../utils/format.js';
+import { insightMetric, PERIOD_DAYS } from '../lib/insights.js';
 import '../styles/components.css';
 
 const descriptions = {
   followers: 'Total atual de seguidores da conta.',
-  reach: 'Contas únicas alcançadas no período diário consultado.',
-  views: 'Visualizações no período diário consultado.',
-  interactions: 'Interações no período diário consultado.',
-  engaged: 'Contas que interagiram no período diário consultado.',
+  reach: 'Contas únicas alcançadas no período selecionado.',
+  views: 'Visualizações no período selecionado.',
+  interactions: 'Interações no período selecionado.',
+  engaged: 'Contas que interagiram no período selecionado.',
 };
-
-function getInsightValue(insights, name) {
-  const insight = insights?.find((item) => item.name === name);
-
-  if (!insight) return null;
-
-  if (insight.total_value?.value !== undefined) {
-    return insight.total_value.value;
-  }
-
-  const values = insight.values;
-
-  if (Array.isArray(values) && values.length > 0) {
-    return values[values.length - 1].value ?? null;
-  }
-
-  return null;
-}
 
 export default function Metrics({ account }) {
   const [periodId, setPeriodId] = useState('30d');
@@ -39,23 +22,23 @@ export default function Metrics({ account }) {
   const [instagramLoading, setInstagramLoading] = useState(true);
   const [instagramError, setInstagramError] = useState('');
 
-  const periodDays =
-    periodId === '7d' ? 7 :
-    periodId === '90d' ? 90 :
-    30;
+  const periodDays = PERIOD_DAYS[periodId];
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
 
     async function loadInstagram() {
       setInstagramLoading(true);
       setInstagramError('');
+      setInstagram(null);
 
       try {
         const { data, error } = await supabase.functions.invoke(
           'instagram-insights',
           {
             body: { periodDays },
+            signal: controller.signal,
           },
         );
 
@@ -96,6 +79,7 @@ export default function Metrics({ account }) {
 
     return () => {
       active = false;
+      controller.abort();
     };
   }, [periodDays]);
 
@@ -104,6 +88,7 @@ export default function Metrics({ account }) {
         .filter(
           (point) =>
             typeof point.date === 'string' &&
+            point.value !== null && point.value !== undefined &&
             Number.isFinite(Number(point.value)),
         )
         .map((point) => ({
@@ -118,6 +103,7 @@ export default function Metrics({ account }) {
         .filter(
           (point) =>
             typeof point.date === 'string' &&
+            point.value !== null && point.value !== undefined &&
             Number.isFinite(Number(point.value)),
         )
         .map((point) => ({
@@ -131,25 +117,25 @@ export default function Metrics({ account }) {
     {
       id: 'reach',
       label: 'Contas alcançadas',
-      value: getInsightValue(instagram?.insights, 'reach'),
+      ...insightMetric(instagram, 'reach', periodDays, instagramLoading),
       description: descriptions.reach,
     },
     {
       id: 'views',
       label: 'Visualizações',
-      value: getInsightValue(instagram?.insights, 'views'),
+      ...insightMetric(instagram, 'views', periodDays, instagramLoading),
       description: descriptions.views,
     },
     {
       id: 'interactions',
       label: 'Interações',
-      value: getInsightValue(instagram?.insights, 'total_interactions'),
+      ...insightMetric(instagram, 'total_interactions', periodDays, instagramLoading),
       description: descriptions.interactions,
     },
     {
       id: 'engaged',
       label: 'Contas com engajamento',
-      value: getInsightValue(instagram?.insights, 'accounts_engaged'),
+      ...insightMetric(instagram, 'accounts_engaged', periodDays, instagramLoading),
       description: descriptions.engaged,
     },
   ];
@@ -159,6 +145,7 @@ export default function Metrics({ account }) {
       id: 'followers',
       label: 'Seguidores',
       value: instagram?.profile?.followers_count ?? null,
+      status: instagramLoading ? 'loading' : instagram?.profile?.followers_count == null ? 'unavailable' : 'available',
       description: descriptions.followers,
     },
     ...realMetrics,
@@ -222,7 +209,7 @@ export default function Metrics({ account }) {
         </div>
 
         <div className="metrics-period">
-          <span>Período dos gráficos</span>
+          <span>Período de análise</span>
 
           <PeriodSelect
             id="metrics-period"
@@ -251,9 +238,13 @@ export default function Metrics({ account }) {
         ))}
       </div>
 
+      {instagram && instagram.insightsPeriodDays !== periodDays && (
+        <p role="alert">A função de Insights publicada precisa ser atualizada para confirmar o período dos cartões.</p>
+      )}
+
       {instagram?.insightsError && (
         <p role="status">
-          Alguns Insights não estão disponíveis: {instagram.insightsError}
+          Falha nos Insights: {instagram.insightsError}
         </p>
       )}
 

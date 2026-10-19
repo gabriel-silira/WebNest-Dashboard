@@ -50,6 +50,7 @@ export default function ChartCard({
           (point) =>
             point &&
             typeof point.date === 'string' &&
+            point.value !== null && point.value !== undefined &&
             Number.isFinite(Number(point.value)),
         )
         .map((point) => ({

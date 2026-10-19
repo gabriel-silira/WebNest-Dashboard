@@ -6,19 +6,7 @@ import ChartCard from '../components/ChartCard.jsx';
 import PostsTable from '../components/PostsTable.jsx';
 import StatePanel from '../components/StatePanel.jsx';
 import { supabase } from '../lib/supabase.js';
-
-const PERIOD_DAYS = { '7d': 7, '30d': 30, '90d': 90 };
-function getInsightValue(insights, name) {
-  const insight = insights?.find((item) => item.name === name);
-
-  if (!insight) return null;
-  if (insight.total_value?.value !== undefined) return insight.total_value.value;
-
-  const values = insight.values;
-  return Array.isArray(values) && values.length > 0
-    ? values.at(-1).value ?? null
-    : null;
-}
+import { insightMetric, PERIOD_DAYS } from '../lib/insights.js';
 
 function normalizeHistory(history) {
   if (!Array.isArray(history)) return [];
@@ -26,7 +14,9 @@ function normalizeHistory(history) {
   return history
     .filter(
       (point) =>
-        typeof point.date === 'string' && Number.isFinite(Number(point.value)),
+        typeof point.date === 'string' &&
+        point.value !== null && point.value !== undefined &&
+        Number.isFinite(Number(point.value)),
     )
     .map((point) => ({ date: point.date, value: Number(point.value) }))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -69,15 +59,17 @@ export default function Overview({ account, status, onConnectionStatus }) {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
 
     async function loadOverview() {
       setLoading(true);
       setError('');
+      setInstagram(null);
 
       try {
         const { data, error: functionError } = await supabase.functions.invoke(
           'instagram-insights',
-          { body: { periodDays } },
+          { body: { periodDays }, signal: controller.signal },
         );
 
         if (!active) return;
@@ -104,6 +96,7 @@ export default function Overview({ account, status, onConnectionStatus }) {
     loadOverview();
     return () => {
       active = false;
+      controller.abort();
     };
   }, [periodDays, reloadVersion]);
 
@@ -116,7 +109,9 @@ export default function Overview({ account, status, onConnectionStatus }) {
     [instagram],
   );
   const posts = useMemo(() => normalizePosts(instagram?.media), [instagram]);
-  const followers = Number(instagram?.profile?.followers_count);
+  const followers = instagram?.profile?.followers_count == null
+    ? null
+    : Number(instagram.profile.followers_count);
   const engagementSeries = useMemo(() => {
     if (!Number.isFinite(followers) || followers <= 0) return [];
 
@@ -132,6 +127,8 @@ export default function Overview({ account, status, onConnectionStatus }) {
             post.timestamp &&
             !Number.isNaN(publishedAt.getTime()) &&
             publishedAt >= cutoff &&
+            post.like_count !== null && post.like_count !== undefined &&
+            post.comments_count !== null && post.comments_count !== undefined &&
             Number.isFinite(Number(post.like_count)) &&
             Number.isFinite(Number(post.comments_count))
           );
@@ -149,24 +146,26 @@ export default function Overview({ account, status, onConnectionStatus }) {
       id: 'followers',
       label: 'Seguidores',
       value: Number.isFinite(followers) ? followers : null,
+      status: loading ? 'loading' : Number.isFinite(followers) ? 'available' : 'unavailable',
       description: 'Total atual de seguidores da conta.',
     },
     {
       id: 'reach',
       label: 'Alcance',
-      value: getInsightValue(instagram?.insights, 'reach'),
-      description: 'Contas únicas alcançadas no período diário consultado.',
+      ...insightMetric(instagram, 'reach', periodDays, loading),
+      description: 'Contas únicas alcançadas no período selecionado.',
     },
     {
       id: 'views',
       label: 'Visualizações',
-      value: getInsightValue(instagram?.insights, 'views'),
-      description: 'Visualizações no período diário consultado.',
+      ...insightMetric(instagram, 'views', periodDays, loading),
+      description: 'Visualizações no período selecionado.',
     },
     {
       id: 'engagement',
       label: 'Taxa de engajamento',
       value: engagement,
+      status: loading ? 'loading' : engagement === null ? 'unavailable' : 'available',
       format: 'percent',
       description: 'Curtidas e comentários da publicação mais recente em relação aos seguidores.',
     },
@@ -206,6 +205,13 @@ export default function Overview({ account, status, onConnectionStatus }) {
               <MetricDetailCard key={metric.id} metric={metric} />
             ))}
           </section>
+
+          {instagram?.insightsPeriodDays !== periodDays && (
+            <p role="alert">A função de Insights publicada precisa ser atualizada para confirmar o período dos cartões.</p>
+          )}
+          {instagram?.insightsError && (
+            <p role="status">{instagram.insightsError}</p>
+          )}
 
           <section className="charts">
             {reachHistory.length > 0 && (

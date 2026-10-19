@@ -26,6 +26,13 @@ function formatNumber(value) {
 
 export default function MetricDetailCard({ metric }) {
   const Icon = icons[metric.id] ?? Users;
+  const valueLabel = metric.status === 'loading'
+    ? 'Carregando...'
+    : metric.status === 'error'
+      ? 'Erro na consulta'
+      : metric.status === 'unavailable'
+        ? 'Indisponível'
+        : formatNumber(metric.value);
 
   return (
     <article className="metric-detail-card">
@@ -38,8 +45,8 @@ export default function MetricDetailCard({ metric }) {
       </div>
 
       <strong className="metric-detail-card__value">
-        {formatNumber(metric.value)}
-        {metric.format === 'percent' ? '%' : ''}
+        {valueLabel}
+        {metric.format === 'percent' && metric.status === 'available' ? '%' : ''}
       </strong>
 
       <p className="metric-detail-card__description">

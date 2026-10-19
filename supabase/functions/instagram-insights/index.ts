@@ -4,6 +4,12 @@ import {
   hasPasswordAuthentication,
   isAuthorizedInstagramUser,
 } from "./authorization.ts";
+import {
+  CARD_METRICS,
+  insightRange,
+  insightUrl,
+  totalValueForMetric,
+} from "./insights.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -195,53 +201,53 @@ Deno.serve(async (req: Request) => {
       ? mediaResult.data
       : [];
 
-    // 3. Consultar as métricas agregadas da conta.
-    let insights: unknown[] = [];
-    let insightsError: string | null = null;
+    const range = insightRange(periodDays, new Date());
 
-    const insightsUrl = new URL(
-      `${API_BASE}/${profile.user_id}/insights`,
+    // Cada métrica é isolada: uma restrição da Meta não oculta as demais.
+    // total_value representa o intervalo inteiro; values é uma série diária.
+    const results = await Promise.all(CARD_METRICS.map(async (metric) => {
+      try {
+        const response = await fetch(
+          insightUrl(API_BASE, profile.user_id, metric, range),
+          { headers: { Authorization: `Bearer ${instagramToken}` } },
+        );
+        const result = await readJson(response);
+
+        if (!response.ok) {
+          console.warn("Insight indisponível:", metric, result?.error?.code);
+          return { metric, value: null, error: true };
+        }
+
+        return {
+          metric,
+          value: totalValueForMetric(result, metric),
+          error: false,
+        };
+      } catch (error) {
+        console.warn(
+          "Falha na consulta de Insight:",
+          metric,
+          error instanceof Error ? error.name : "Erro desconhecido",
+        );
+        return { metric, value: null, error: true };
+      }
+    }));
+
+    const insights = results
+      .filter((result) => result.value !== null)
+      .map((result) => ({
+        name: result.metric,
+        total_value: { value: result.value },
+      }));
+    const insightsErrors = Object.fromEntries(
+      results.filter((result) => result.error).map((result) => [
+        result.metric,
+        "Não foi possível consultar esta métrica na Meta.",
+      ]),
     );
-
-    insightsUrl.searchParams.set(
-      "metric",
-      [
-        "reach",
-        "views",
-        "accounts_engaged",
-        "total_interactions",
-        "likes",
-        "comments",
-        "saves",
-        "follows_and_unfollows",
-        "profile_links_taps",
-      ].join(","),
-    );
-
-    insightsUrl.searchParams.set("metric_type", "total_value");
-    insightsUrl.searchParams.set("period", "day");
-
-    const insightsResponse = await fetch(insightsUrl, {
-      headers: {
-        Authorization: `Bearer ${instagramToken}`,
-      },
-    });
-
-    const insightsResult = await readJson(insightsResponse);
-
-    if (insightsResponse.ok) {
-      insights = insightsResult?.data ?? [];
-    } else {
-      insightsError =
-        insightsResult?.error?.message ??
-        "Os Insights não estão disponíveis para esta conta.";
-
-      console.warn(
-        "Insights indisponíveis:",
-        insightsResult?.error?.code,
-        insightsError,
-      );
-    }
+    const insightsError = results.every((result) => result.error)
+      ? "Não foi possível consultar os Insights da Meta."
+      : null;
 
     // 4. Consultar o histórico diário de alcance.
     let reachHistory: Array<{
@@ -251,28 +257,8 @@ Deno.serve(async (req: Request) => {
 
     let reachHistoryError: string | null = null;
 
-    const today = new Date().toISOString().slice(0, 10);
-    const sinceDate = new Date(`${today}T00:00:00.000Z`);
-
-    sinceDate.setUTCDate(
-      sinceDate.getUTCDate() - (periodDays - 1),
-    );
-
-    const reachUrl = new URL(
-      `${API_BASE}/${profile.user_id}/insights`,
-    );
-
-    reachUrl.searchParams.set("metric", "reach");
-    reachUrl.searchParams.set("period", "day");
-    reachUrl.searchParams.set("metric_type", "time_series");
-    reachUrl.searchParams.set(
-      "since",
-      String(Math.floor(sinceDate.getTime() / 1000)),
-    );
-    reachUrl.searchParams.set(
-      "until",
-      String(Math.floor(Date.now() / 1000)),
-    );
+    const { today } = range;
+    const reachUrl = insightUrl(API_BASE, profile.user_id, "reach_history", range);
 
     const reachResponse = await fetch(reachUrl, {
       headers: {
@@ -371,7 +357,7 @@ Deno.serve(async (req: Request) => {
         .from("instagram_followers_history")
         .select("snapshot_date, followers_count")
         .eq("user_id", user.id)
-        .gte("snapshot_date", sinceDate.toISOString().slice(0, 10))
+        .gte("snapshot_date", range.sinceDate)
         .lte("snapshot_date", today)
         .order("snapshot_date", { ascending: true });
 
@@ -396,6 +382,9 @@ Deno.serve(async (req: Request) => {
       media,
       insights,
       insightsError,
+      insightsErrors,
+      insightsPeriodDays: periodDays,
+      insightsRange: { since: range.sinceDate, until: today },
       reachHistory,
       reachHistoryError,
       reachHistoryPeriodDays: periodDays,
