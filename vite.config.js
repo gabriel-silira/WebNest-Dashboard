@@ -3,6 +3,6 @@ import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/WebNest-Dashboard/',
+  base: '/',
   plugins: [react()],
 })
